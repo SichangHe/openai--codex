@@ -60,7 +60,7 @@ fn truncate_with_byte_estimate(s: &str, max_bytes: usize, use_tokens: bool) -> S
         use_tokens,
         removed_units(
             use_tokens,
-            total_bytes.saturating_sub(max_bytes),
+            removed_byte_count(total_bytes, left.len(), right.len()),
             removed_chars,
         ),
     );
@@ -142,6 +142,17 @@ fn removed_units(use_tokens: bool, removed_bytes: usize, removed_chars: usize) -
     } else {
         u64::try_from(removed_chars).unwrap_or(u64::MAX)
     }
+}
+
+/// Returns bytes omitted after UTF-8 boundary rounding of both retained slices.
+fn removed_byte_count(
+    total_bytes: usize,
+    retained_prefix_bytes: usize,
+    retained_suffix_bytes: usize,
+) -> usize {
+    total_bytes
+        .saturating_sub(retained_prefix_bytes)
+        .saturating_sub(retained_suffix_bytes)
 }
 
 fn assemble_truncated_output(prefix: &str, suffix: &str, marker: &str) -> String {

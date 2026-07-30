@@ -1,3 +1,6 @@
+use super::approx_tokens_from_byte_count;
+use super::removed_byte_count;
+use super::removed_units;
 use super::split_string;
 use super::truncate_middle_chars;
 use super::truncate_middle_with_token_budget;
@@ -107,6 +110,74 @@ fn truncate_middle_tokens_handles_utf8_content() {
     let (out, tokens) = truncate_middle_with_token_budget(s, /*max_tokens*/ 8);
     assert_eq!(out, "😀😀😀😀…8 tokens truncated… line with text\n");
     assert_eq!(tokens, Some(16));
+}
+
+#[test]
+fn truncate_middle_tokens_counts_bytes_removed_after_utf8_rounding() {
+    let (out, tokens) = truncate_middle_with_token_budget("€€", /*max_tokens*/ 1);
+    assert_eq!(out, "…2 tokens truncated…");
+    assert_eq!(tokens, Some(2));
+}
+
+#[test]
+fn production_accounting_chain_matches_verified_equation() {
+    for total_bytes in 0..=32 {
+        for retained_prefix_bytes in 0..=total_bytes {
+            for retained_suffix_bytes in 0..=(total_bytes - retained_prefix_bytes) {
+                let omitted_bytes =
+                    removed_byte_count(total_bytes, retained_prefix_bytes, retained_suffix_bytes);
+                let expected_omitted_bytes =
+                    total_bytes - retained_prefix_bytes - retained_suffix_bytes;
+
+                assert_eq!(omitted_bytes, expected_omitted_bytes);
+                assert_eq!(
+                    removed_units(/*use_tokens*/ true, omitted_bytes, usize::MAX),
+                    approx_tokens_from_byte_count(expected_omitted_bytes)
+                );
+            }
+        }
+    }
+
+    for (total_bytes, retained_prefix_bytes, retained_suffix_bytes) in [
+        (0, 1, 0),
+        (4, 5, 1),
+        (4, 3, 2),
+        (usize::MAX, usize::MAX, usize::MAX),
+    ] {
+        let omitted_bytes =
+            removed_byte_count(total_bytes, retained_prefix_bytes, retained_suffix_bytes);
+        let expected_omitted_bytes = total_bytes
+            .saturating_sub(retained_prefix_bytes)
+            .saturating_sub(retained_suffix_bytes);
+
+        assert_eq!(omitted_bytes, expected_omitted_bytes);
+        assert_eq!(
+            removed_units(/*use_tokens*/ true, omitted_bytes, usize::MAX),
+            approx_tokens_from_byte_count(expected_omitted_bytes)
+        );
+    }
+}
+
+#[test]
+fn split_string_slices_are_utf8_aligned_disjoint_and_accounted() {
+    for s in ["", "abcdef", "é€😀", "😀abc😀", "€€"] {
+        for beginning_bytes in 0..=s.len().saturating_add(1) {
+            for end_bytes in 0..=s.len().saturating_add(1) {
+                let (_, prefix, suffix) = split_string(s, beginning_bytes, end_bytes);
+                let suffix_start = s.len() - suffix.len();
+
+                assert!(s.is_char_boundary(prefix.len()));
+                assert!(s.is_char_boundary(suffix_start));
+                assert_eq!(prefix, &s[..prefix.len()]);
+                assert_eq!(suffix, &s[suffix_start..]);
+                assert!(prefix.len() <= suffix_start);
+                assert_eq!(
+                    removed_byte_count(s.len(), prefix.len(), suffix.len()),
+                    suffix_start - prefix.len()
+                );
+            }
+        }
+    }
 }
 
 #[test]
